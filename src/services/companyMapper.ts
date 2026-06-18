@@ -3,7 +3,8 @@ import {
   normalizeEmail,
   normalizeInstagram,
   normalizePhone,
-  normalizeWebsite
+  normalizeWebsite,
+  normalizeWebsiteDomain
 } from './normalizer.js';
 import { isCompanyValid } from './validator.js';
 
@@ -12,6 +13,7 @@ export function toCompanyData(input: PartialCompanyData): CompanyData {
   const email = normalizeEmail(input.email);
   const instagram = normalizeInstagram(input.instagram);
   const website = normalizeWebsite(input.website);
+  const websiteDomain = normalizeWebsiteDomain(website);
 
   return {
     name: input.name.trim(),
@@ -20,6 +22,8 @@ export function toCompanyData(input: PartialCompanyData): CompanyData {
     email,
     instagram,
     website,
+    websiteDomain,
+    googleMapsUrl: input.googleMapsUrl?.trim() ?? '',
     category: input.category?.trim() ?? '',
     rating: Number.isFinite(input.rating) ? Number(input.rating) : 0,
     source: input.source,

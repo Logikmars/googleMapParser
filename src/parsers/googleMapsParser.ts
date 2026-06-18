@@ -247,6 +247,7 @@ export async function parseGoogleMaps(
           email: '',
           instagram: raw.instagram ?? '',
           website: raw.website ?? '',
+          googleMapsUrl: raw.placeUrl ?? '',
           category: raw.category || keyword,
           rating: parseRating(raw.rating),
           source: 'google_maps',

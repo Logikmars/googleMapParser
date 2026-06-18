@@ -80,8 +80,30 @@ export function normalizeWebsite(value: string | undefined): string {
   try {
     const url = new URL(value.startsWith('http') ? value : `https://${value}`);
     url.hash = '';
+    url.search = '';
     return url.toString().replace(/\/$/, '');
   } catch {
     return value.trim();
+  }
+}
+
+export function normalizeWebsiteDomain(value: string | undefined): string {
+  if (!value) return '';
+
+  try {
+    const url = new URL(value.startsWith('http') ? value : `https://${value}`);
+    const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+    if (['facebook.com', 'instagram.com', 'tiktok.com'].includes(hostname)) {
+      const firstPathPart = url.pathname.split('/').filter(Boolean)[0] ?? '';
+      return firstPathPart ? `${hostname}/${firstPathPart.toLowerCase()}` : hostname;
+    }
+    return hostname;
+  } catch {
+    return value
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .split('/')[0] ?? '';
   }
 }

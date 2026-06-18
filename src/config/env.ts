@@ -37,12 +37,22 @@ export const env = {
   GOOGLE_MAPS_MAX_RESULTS: readNumber('GOOGLE_MAPS_MAX_RESULTS', 250),
   GOOGLE_MAPS_PARSE_DETAILS: readBoolean('GOOGLE_MAPS_PARSE_DETAILS', true),
   GOOGLE_MAPS_ENRICH_WEBSITES: readBoolean('GOOGLE_MAPS_ENRICH_WEBSITES', true),
+  GOOGLE_SEARCH_ENRICH_MISSING_WEBSITES: readBoolean(
+    'GOOGLE_SEARCH_ENRICH_MISSING_WEBSITES',
+    true
+  ),
+  GOOGLE_SEARCH_MAX_COMPANIES: readNumber('GOOGLE_SEARCH_MAX_COMPANIES', 40),
+  GOOGLE_SEARCH_RESULTS_PER_COMPANY: readNumber('GOOGLE_SEARCH_RESULTS_PER_COMPANY', 10),
   WEBSITE_ENRICH_MAX_PER_JOB: readNumber('WEBSITE_ENRICH_MAX_PER_JOB', 150),
   EXCLUDE_CHAINS: readBoolean('EXCLUDE_CHAINS', true),
   CHAIN_MAX_SAME_NAME_PER_JOB: readNumber('CHAIN_MAX_SAME_NAME_PER_JOB', 2),
   CHAIN_DENYLIST: readString(
     'CHAIN_DENYLIST',
     'kfc,mcdonald,mc donald,макдональдс,макдоналдс,макдональдз,макдональд,пузата хата,puzata hata,puzatahata,burger king,starbucks,domino,pizza hut,subway,hesburger'
+  ),
+  EXCLUDED_CATEGORIES: readString(
+    'EXCLUDED_CATEGORIES',
+    'shopping mall,mall,shopping center,shopping centre,trade center,retail park,hotel,supermarket,grocery store,gas station,market,hypermarket,convenience store,food court,delivery service,wholesale,трц,тц,торговий центр,торговый центр'
   ),
   INSTAGRAM_USERNAME: readString('INSTAGRAM_USERNAME'),
   INSTAGRAM_PASSWORD: readString('INSTAGRAM_PASSWORD'),

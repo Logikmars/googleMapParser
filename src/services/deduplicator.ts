@@ -4,10 +4,12 @@ function companyKey(company: CompanyData): string {
   const phone = company.phone.trim();
   const email = company.email.trim().toLowerCase();
   const website = company.website.trim().toLowerCase();
+  const websiteDomain = company.websiteDomain.trim().toLowerCase();
 
   if (phone && email) return `phone-email:${phone}|${email}`;
   if (phone) return `phone:${phone}`;
   if (email) return `email:${email}`;
+  if (websiteDomain) return `website-domain:${websiteDomain}`;
   if (website) return `website:${website}`;
   return `name-address:${company.name.trim().toLowerCase()}|${company.address.trim().toLowerCase()}`;
 }

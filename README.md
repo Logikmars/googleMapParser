@@ -46,6 +46,24 @@ CHAIN_DENYLIST=kfc,mcdonald,пузата хата,burger king,starbucks
 
 Фильтр удаляет бренды из denylist и заведения, чье нормализованное имя повторилось в одном job больше `CHAIN_MAX_SAME_NAME_PER_JOB` раз.
 
+Нерелевантные категории можно отсеивать так:
+
+```env
+EXCLUDED_CATEGORIES=shopping mall,mall,shopping center,hotel,supermarket,grocery store,gas station,food court,трц,тц,торговий центр,торговый центр
+```
+
+Если Google Maps не дал сайт, worker может попробовать найти его через Google Search:
+
+```env
+GOOGLE_SEARCH_ENRICH_MISSING_WEBSITES=true
+GOOGLE_SEARCH_MAX_COMPANIES=40
+GOOGLE_SEARCH_RESULTS_PER_COMPANY=10
+```
+
+Для дедупликации сохраняется `websiteDomain`, поэтому `https://site.ua`, `https://www.site.ua` и страницы вроде `/contacts` считаются одним доменом.
+
+В CSV также сохраняется `googleMapsUrl` - ссылка на карточку заведения в Google Maps.
+
 Для большего покрытия задавай несколько keywords через запятую или с новой строки: `coffee shop`, `cafe`, `bakery`, `restaurant`, `fast food`, `burger`, `pizza`, `kebab`.
 
 Одноразовая постановка дефолтных задач без админки:

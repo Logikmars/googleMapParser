@@ -11,6 +11,8 @@ const CompanySchema = new Schema<ICompany>(
     email: { type: String, default: '', lowercase: true, trim: true, index: true },
     instagram: { type: String, default: '', trim: true },
     website: { type: String, default: '', trim: true },
+    websiteDomain: { type: String, default: '', trim: true, lowercase: true },
+    googleMapsUrl: { type: String, default: '', trim: true },
     category: { type: String, default: '', trim: true, index: true },
     rating: { type: Number, min: 0, max: 5, default: 0 },
     source: {
@@ -37,11 +39,11 @@ CompanySchema.index(
 );
 
 CompanySchema.index(
-  { website: 1 },
+  { websiteDomain: 1 },
   {
     unique: true,
     partialFilterExpression: {
-      website: { $type: 'string', $gt: '' }
+      websiteDomain: { $type: 'string', $gt: '' }
     }
   }
 );

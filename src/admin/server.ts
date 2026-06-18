@@ -147,7 +147,7 @@ app.get('/', (_req, res) => {
           </div>
           <table>
             <thead>
-              <tr><th>Name</th><th>Category</th><th>Phone</th><th>Email</th><th>Website</th><th>Source</th></tr>
+              <tr><th>Name</th><th>Category</th><th>Phone</th><th>Email</th><th>Website</th><th>Maps</th><th>Source</th></tr>
             </thead>
             <tbody id="companiesBody"></tbody>
           </table>
@@ -196,9 +196,10 @@ app.get('/', (_req, res) => {
           <td>\${escapeHtml(company.phone)}</td>
           <td>\${escapeHtml(company.email)}</td>
           <td>\${company.website ? \`<a href="\${escapeHtml(company.website)}" target="_blank" rel="noreferrer">open</a>\` : ''}</td>
+          <td>\${company.googleMapsUrl ? \`<a href="\${escapeHtml(company.googleMapsUrl)}" target="_blank" rel="noreferrer">maps</a>\` : ''}</td>
           <td>\${escapeHtml(company.source)}</td>
         </tr>
-      \`).join('') || '<tr><td colspan="6" class="muted">No companies yet</td></tr>';
+      \`).join('') || '<tr><td colspan="7" class="muted">No companies yet</td></tr>';
     }
 
     form.addEventListener('submit', async (event) => {
@@ -361,7 +362,7 @@ app.get('/api/companies', async (_req, res) => {
   const companies = await Company.find()
     .sort({ scrapedAt: -1 })
     .limit(50)
-    .select('name category phone email website instagram source scrapedAt isValid')
+    .select('name category phone email website websiteDomain googleMapsUrl instagram source scrapedAt isValid')
     .lean()
     .exec();
 

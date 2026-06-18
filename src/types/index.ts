@@ -7,6 +7,8 @@ export interface CompanyData {
   email: string;
   instagram: string;
   website: string;
+  websiteDomain: string;
+  googleMapsUrl: string;
   category: string;
   rating: number;
   source: CompanySource;

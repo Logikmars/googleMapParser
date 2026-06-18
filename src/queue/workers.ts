@@ -3,12 +3,14 @@ import { connectMongo } from '../config/mongo.js';
 import { env } from '../config/env.js';
 import { Company } from '../models/Company.js';
 import { parseGoogleMaps } from '../parsers/googleMapsParser.js';
+import { findWebsitesWithGoogleSearch } from '../parsers/googleSearchParser.js';
 import { parseInstagram } from '../parsers/instagramParser.js';
 import { parseOpenSources } from '../parsers/openSourceParser.js';
 import { toCompanyData } from '../services/companyMapper.js';
 import { deduplicateCompanies } from '../services/deduplicator.js';
 import { hasAnyContact } from '../services/validator.js';
 import { filterChains } from '../services/chainFilter.js';
+import { filterExcludedCategories } from '../services/categoryFilter.js';
 import type {
   GoogleMapsJobData,
   InstagramJobData,
@@ -34,7 +36,19 @@ function isOpenSourceJob(job: Job<ParserJobData, number, ParserJobName>): job is
 
 async function saveCompanies(rawCompanies: PartialCompanyData[]): Promise<number> {
   const contactedCompanies = deduplicateCompanies(rawCompanies.map(toCompanyData)).filter(hasAnyContact);
-  const { kept: companies, removed: chainCompanies } = filterChains(contactedCompanies);
+  const { kept: categoryCompanies, removed: categoryRemoved } =
+    filterExcludedCategories(contactedCompanies);
+  const { kept: companies, removed: chainCompanies } = filterChains(categoryCompanies);
+
+  if (categoryRemoved.length) {
+    logger.info('Filtered excluded categories', {
+      removed: categoryRemoved.length,
+      examples: categoryRemoved.slice(0, 5).map((company) => ({
+        name: company.name,
+        category: company.category
+      }))
+    });
+  }
 
   if (chainCompanies.length) {
     logger.info('Filtered chain companies', {
@@ -68,6 +82,7 @@ function buildCompanyFilter(company: ReturnType<typeof toCompanyData>): Record<s
 
   if (company.email) or.push({ email: company.email });
   if (company.phone) or.push({ phone: company.phone });
+  if (company.websiteDomain) or.push({ websiteDomain: company.websiteDomain });
   if (company.website) or.push({ website: company.website });
 
   if (or.length === 1) return or[0];
@@ -172,6 +187,10 @@ export const parserWorker = new Worker<ParserJobData, number, ParserJobName>(
 
     if (isGoogleMapsJob(job)) {
       companies = await parseGoogleMaps(job.data.keywords, job.data.location);
+
+      if (env.GOOGLE_SEARCH_ENRICH_MISSING_WEBSITES) {
+        companies = await findWebsitesWithGoogleSearch(companies, job.data.location);
+      }
 
       const websites = uniqueWebsites(companies);
       if (env.GOOGLE_MAPS_ENRICH_WEBSITES && websites.length) {
