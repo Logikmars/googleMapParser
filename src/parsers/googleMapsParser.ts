@@ -1,9 +1,9 @@
-import type { Page } from 'puppeteer';
+import type { Browser, Page } from 'puppeteer';
 import { env } from '../config/env.js';
 import type { PartialCompanyData } from '../types/index.js';
 import { createBrowser, preparePage } from './browser.js';
 import { logger } from '../utils/logger.js';
-import { randomDelay, retryWithBackoff } from '../utils/rateLimit.js';
+import { mapWithConcurrency, randomDelay, retryWithBackoff } from '../utils/rateLimit.js';
 
 interface GoogleMapsRawCompany {
   name?: string;
@@ -16,10 +16,123 @@ interface GoogleMapsRawCompany {
   placeUrl?: string;
 }
 
+const nonPlaceWebsiteDomains = [
+  'facebook.com',
+  'instagram.com',
+  'tripadvisor.',
+  'foursquare.',
+  'yelp.',
+  'restaurantguru.',
+  'findglocal.',
+  'mapcarta.',
+  'wikipedia.org',
+  'guide.',
+  'places.',
+  'directory.',
+  'thecoffeevine.com',
+  'funtime.kiev.ua'
+];
+
 function parseRating(value?: string): number {
   if (!value) return 0;
   const normalized = value.replace(',', '.').match(/\d+(\.\d+)?/)?.[0];
   return normalized ? Number(normalized) : 0;
+}
+
+function isNonPlaceWebsite(value: string | undefined): boolean {
+  if (!value) return false;
+
+  try {
+    const url = new URL(value);
+    const domain = url.hostname.toLowerCase().replace(/^www\./, '');
+    return nonPlaceWebsiteDomains.some((blocked) => domain.includes(blocked));
+  } catch {
+    return nonPlaceWebsiteDomains.some((blocked) => value.toLowerCase().includes(blocked));
+  }
+}
+
+function isLikelyGoogleMapsPlace(company: GoogleMapsRawCompany): boolean {
+  if (company.placeUrl) return true;
+  if (!company.address) return false;
+  return Boolean(company.phone || company.instagram || !isNonPlaceWebsite(company.website));
+}
+
+async function acceptGoogleConsentIfShown(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const consentWords = [
+      'accept all',
+      'i agree',
+      'agree',
+      'принять все',
+      'принять',
+      'согласен',
+      'соглашаюсь',
+      'прийняти всі',
+      'прийняти',
+      'погоджуюся'
+    ];
+    const buttons = Array.from(document.querySelectorAll('button, input[type="submit"]'));
+    const button = buttons.find((element) => {
+      const text = `${element.textContent ?? ''} ${
+        element.getAttribute('value') ?? ''
+      }`.toLowerCase();
+      return consentWords.some((word) => text.includes(word));
+    });
+
+    if (button instanceof HTMLElement) button.click();
+  });
+}
+
+async function getPageDiagnostics(page: Page): Promise<{
+  title: string;
+  url: string;
+  bodyText: string;
+  isBlocked: boolean;
+  isConsent: boolean;
+}> {
+  return page.evaluate(() => {
+    const title = document.title;
+    const url = window.location.href;
+    const bodyText = (document.body?.innerText ?? '').replace(/\s+/g, ' ').slice(0, 500);
+    const haystack = `${title} ${url} ${bodyText}`.toLowerCase();
+
+    return {
+      title,
+      url,
+      bodyText,
+      isBlocked:
+        haystack.includes('/sorry/') ||
+        haystack.includes('unusual traffic') ||
+        haystack.includes('captcha') ||
+        haystack.includes('our systems have detected'),
+      isConsent:
+        haystack.includes('consent.google') ||
+        haystack.includes('before you continue') ||
+        haystack.includes('прежде чем перейти') ||
+        haystack.includes('перш ніж перейти')
+    };
+  });
+}
+
+async function waitForGoogleMapsResults(page: Page): Promise<boolean> {
+  await acceptGoogleConsentIfShown(page);
+
+  try {
+    await page.waitForFunction(
+      () =>
+        Boolean(
+          document.querySelector('[role="feed"], .Nv2PK, [role="article"], a.hfpxzc') ||
+            document.querySelector('input#searchboxinput')
+        ),
+      { timeout: 45000 }
+    );
+
+    return Boolean(
+      await page.$('[role="feed"], .Nv2PK, [role="article"], a.hfpxzc')
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function autoScrollResults(page: Page): Promise<void> {
@@ -186,6 +299,21 @@ async function extractCompanyDetails(page: Page, company: GoogleMapsRawCompany):
   }
 }
 
+async function extractCompanyDetailsInNewPage(
+  browser: Browser,
+  company: GoogleMapsRawCompany
+): Promise<GoogleMapsRawCompany> {
+  if (!company.placeUrl) return company;
+
+  const page = await browser.newPage();
+  try {
+    await preparePage(page);
+    return await extractCompanyDetails(page, company);
+  } finally {
+    await page.close();
+  }
+}
+
 export async function parseGoogleMaps(
   keywords: string[],
   location: string
@@ -205,36 +333,54 @@ export async function parseGoogleMaps(
       const url = `https://www.google.com/maps/search/${query}`;
       logger.info('Parsing Google Maps', { keyword, location, url });
 
-      let rawCompanies = await retryWithBackoff(async () => {
-        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForSelector('[role="feed"], .Nv2PK, [role="article"]', { timeout: 30000 });
-        await autoScrollResults(page);
-        return extractCompanies(page);
-      }, 3, 2000);
+      let rawCompanies: GoogleMapsRawCompany[];
 
-      rawCompanies = rawCompanies.slice(0, env.GOOGLE_MAPS_MAX_RESULTS);
+      try {
+        rawCompanies = await retryWithBackoff(async () => {
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-      if (env.GOOGLE_MAPS_PARSE_DETAILS) {
-        const detailedCompanies: GoogleMapsRawCompany[] = [];
-
-        for (const [index, company] of rawCompanies.entries()) {
-          if (!company.placeUrl) {
-            detailedCompanies.push(company);
-            continue;
+          const hasResults = await waitForGoogleMapsResults(page);
+          if (!hasResults) {
+            const diagnostics = await getPageDiagnostics(page);
+            throw new Error(
+              `Google Maps results were not found. title="${diagnostics.title}" url="${diagnostics.url}" blocked=${diagnostics.isBlocked} consent=${diagnostics.isConsent} body="${diagnostics.bodyText}"`
+            );
           }
 
-          logger.info('Parsing Google Maps place details', {
-            keyword,
-            index: index + 1,
-            total: rawCompanies.length,
-            name: company.name
-          });
+          await autoScrollResults(page);
+          return extractCompanies(page);
+        }, 3, 2000);
+      } catch (error) {
+        logger.warn('Google Maps keyword skipped', {
+          keyword,
+          location,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
 
-          detailedCompanies.push(await extractCompanyDetails(page, company));
-          await randomDelay(700, 1600);
-        }
+      rawCompanies = rawCompanies
+        .filter(isLikelyGoogleMapsPlace)
+        .slice(0, env.GOOGLE_MAPS_MAX_RESULTS);
 
-        rawCompanies = detailedCompanies;
+      if (env.GOOGLE_MAPS_PARSE_DETAILS) {
+        rawCompanies = await mapWithConcurrency(
+          rawCompanies,
+          env.GOOGLE_MAPS_DETAILS_CONCURRENCY,
+          async (company, index) => {
+            if (!company.placeUrl) return company;
+
+            logger.info('Parsing Google Maps place details', {
+              keyword,
+              index: index + 1,
+              total: rawCompanies.length,
+              name: company.name
+            });
+
+            await randomDelay(200, 700);
+            return extractCompanyDetailsInNewPage(browser, company);
+          }
+        );
       }
 
       for (const raw of rawCompanies) {

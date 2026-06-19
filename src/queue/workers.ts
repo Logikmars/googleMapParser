@@ -224,7 +224,10 @@ export const parserWorker = new Worker<ParserJobData, number, ParserJobName>(
   },
   {
     connection: redisConnection,
-    concurrency: 2,
+    concurrency: env.WORKER_CONCURRENCY,
+    lockDuration: env.WORKER_LOCK_DURATION_MS,
+    stalledInterval: env.WORKER_STALLED_INTERVAL_MS,
+    maxStalledCount: env.WORKER_MAX_STALLED_COUNT,
     limiter: {
       max: 20,
       duration: 60_000

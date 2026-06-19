@@ -20,6 +20,18 @@ export function createRateLimiter(intervalCap: number, intervalMs: number): PQue
   });
 }
 
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const queue = new PQueue({ concurrency: Math.max(1, concurrency) });
+
+  return Promise.all(
+    items.map((item, index) => queue.add(() => mapper(item, index)) as Promise<R>)
+  );
+}
+
 export async function retryWithBackoff<T>(
   task: () => Promise<T>,
   retries = 3,

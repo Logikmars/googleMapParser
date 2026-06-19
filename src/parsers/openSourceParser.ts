@@ -4,11 +4,13 @@ import type { Browser } from 'puppeteer';
 import type { PartialCompanyData } from '../types/index.js';
 import { createBrowser, preparePage } from './browser.js';
 import { logger } from '../utils/logger.js';
-import { retryWithBackoff } from '../utils/rateLimit.js';
+import { mapWithConcurrency, retryWithBackoff } from '../utils/rateLimit.js';
 import { validateEmail } from '../services/validator.js';
+import { env } from '../config/env.js';
 
 const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 const phoneRegex = /(?:\+?\d[\d\s().-]{6,}\d)/g;
+const ignoredInstagramUsernames = new Set(['meta']);
 const contactWords = [
   'contact',
   'contacts',
@@ -59,6 +61,10 @@ function decodeCloudflareEmail(hex: string): string {
   }
 
   return email;
+}
+
+function isLikelyAssetEmail(value: string): boolean {
+  return /\.(png|jpe?g|webp|gif|svg|css|js)(?:$|[?#])/i.test(value);
 }
 
 function findContactLinks(baseUrl: string, html: string): string[] {
@@ -128,7 +134,7 @@ function extractEmails(html: string): string[] {
     emails.add(cleanEmail(match[0]));
   }
 
-  return Array.from(emails).filter(validateEmail);
+  return Array.from(emails).filter((email) => validateEmail(email) && !isLikelyAssetEmail(email));
 }
 
 function extractPhones(html: string): string[] {
@@ -154,6 +160,12 @@ function extractCompany(url: string, htmlPages: string[], category = ''): Partia
   const emails = extractEmails(html);
   const phones = extractPhones(html);
   const title = $('title').text().trim() || new URL(url).hostname.replace(/^www\./, '');
+  const instagramMatch =
+    html.match(/https?:\/\/(?:www\.)?instagram\.com\/[A-Za-z0-9_.]+/i)?.[0] ?? '';
+  const instagramUsername = instagramMatch
+    .replace(/^https?:\/\/(?:www\.)?instagram\.com\//i, '')
+    .split(/[/?#]/)[0]
+    .toLowerCase();
 
   if (!emails.length && !phones.length) return null;
 
@@ -162,8 +174,7 @@ function extractCompany(url: string, htmlPages: string[], category = ''): Partia
     address: '',
     phone: phones[0] ?? '',
     email: emails[0] ?? '',
-    instagram:
-      html.match(/https?:\/\/(?:www\.)?instagram\.com\/[A-Za-z0-9_.]+/i)?.[0] ?? '',
+    instagram: ignoredInstagramUsernames.has(instagramUsername) ? '' : instagramMatch,
     website: url,
     category,
     rating: 0,
@@ -182,9 +193,7 @@ export async function parseOpenSources(
   const browser = await createBrowser();
 
   try {
-    const companies: PartialCompanyData[] = [];
-
-    for (const url of urls) {
+    const companies = await mapWithConcurrency(urls, env.WEBSITE_PARSE_CONCURRENCY, async (url) => {
       logger.info('Parsing open source website', { url });
 
       try {
@@ -199,35 +208,40 @@ export async function parseOpenSources(
         const contactLinks = findContactLinks(url, firstHtml);
         const pages = [firstHtml];
 
-        for (const contactUrl of contactLinks) {
-          try {
-            const html = await retryWithBackoff(async () => {
-              try {
-                return await fetchStatic(contactUrl);
-              } catch {
-                return fetchRendered(browser, contactUrl);
-              }
-            }, 1, 1000);
-            pages.push(html);
-          } catch (error) {
-            logger.warn('Contact page parsing failed', {
-              url: contactUrl,
-              error: error instanceof Error ? error.message : String(error)
-            });
+        const contactPages = await mapWithConcurrency(
+          contactLinks,
+          env.WEBSITE_CONTACT_CONCURRENCY,
+          async (contactUrl) => {
+            try {
+              return await retryWithBackoff(async () => {
+                try {
+                  return await fetchStatic(contactUrl);
+                } catch {
+                  return fetchRendered(browser, contactUrl);
+                }
+              }, 1, 1000);
+            } catch (error) {
+              logger.warn('Contact page parsing failed', {
+                url: contactUrl,
+                error: error instanceof Error ? error.message : String(error)
+              });
+              return '';
+            }
           }
-        }
+        );
+        pages.push(...contactPages.filter(Boolean));
 
-        const company = extractCompany(url, pages, category);
-        if (company) companies.push(company);
+        return extractCompany(url, pages, category);
       } catch (error) {
         logger.warn('Website parsing failed', {
           url,
           error: error instanceof Error ? error.message : String(error)
         });
+        return null;
       }
-    }
+    });
 
-    return companies;
+    return companies.filter((company): company is PartialCompanyData => Boolean(company));
   } finally {
     await browser.close();
   }

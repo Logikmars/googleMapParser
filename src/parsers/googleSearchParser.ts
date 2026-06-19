@@ -4,7 +4,7 @@ import type { PartialCompanyData } from '../types/index.js';
 import { normalizeWebsiteDomain } from '../services/normalizer.js';
 import { createBrowser, preparePage } from './browser.js';
 import { logger } from '../utils/logger.js';
-import { randomDelay, retryWithBackoff } from '../utils/rateLimit.js';
+import { mapWithConcurrency, randomDelay, retryWithBackoff } from '../utils/rateLimit.js';
 
 const blockedDomains = [
   'google.',
@@ -110,44 +110,48 @@ export async function findWebsitesWithGoogleSearch(
   const foundByName = new Map<string, string>();
 
   try {
-    const page = await browser.newPage();
-    await preparePage(page);
+    await mapWithConcurrency(targets, env.GOOGLE_SEARCH_CONCURRENCY, async (company) => {
+      const page = await browser.newPage();
+      await preparePage(page);
 
-    for (const company of targets) {
-      const queries = [
-        `"${company.name}" ${location} official website`,
-        `"${company.name}" ${company.address || location} contacts`,
-        `"${company.name}" ${location} site`
-      ];
-      const allResults: string[] = [];
+      try {
+        const queries = [
+          `"${company.name}" ${location} official website`,
+          `"${company.name}" ${company.address || location} contacts`,
+          `"${company.name}" ${location} site`
+        ];
+        const allResults: string[] = [];
 
-      logger.info('Searching website with Google Search', {
-        name: company.name,
-        location
-      });
+        logger.info('Searching website with Google Search', {
+          name: company.name,
+          location
+        });
 
-      for (const rawQuery of queries) {
-        const query = encodeURIComponent(rawQuery);
-        const url = `https://www.google.com/search?q=${query}&num=10&hl=en`;
+        for (const rawQuery of queries) {
+          const query = encodeURIComponent(rawQuery);
+          const url = `https://www.google.com/search?q=${query}&num=10&hl=en`;
 
-        const results = await retryWithBackoff(async () => {
-          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-          await page.waitForSelector('a', { timeout: 20000 });
-          return extractSearchResults(page);
-        }, 2, 2000);
+          const results = await retryWithBackoff(async () => {
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+            await page.waitForSelector('a', { timeout: 20000 });
+            return extractSearchResults(page);
+          }, 2, 2000);
 
-        allResults.push(...results);
-        await randomDelay(900, 1800);
+          allResults.push(...results);
+          await randomDelay(900, 1800);
+        }
+
+        const website = selectBestWebsite(
+          Array.from(new Set(allResults)).slice(0, env.GOOGLE_SEARCH_RESULTS_PER_COMPANY),
+          company.name
+        );
+        if (website) foundByName.set(normalizeName(company.name), website);
+
+        await randomDelay(500, 1200);
+      } finally {
+        await page.close();
       }
-
-      const website = selectBestWebsite(
-        Array.from(new Set(allResults)).slice(0, env.GOOGLE_SEARCH_RESULTS_PER_COMPANY),
-        company.name
-      );
-      if (website) foundByName.set(normalizeName(company.name), website);
-
-      await randomDelay(1500, 3500);
-    }
+    });
   } finally {
     await browser.close();
   }

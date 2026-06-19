@@ -20,4 +20,17 @@ export async function preparePage(page: Page): Promise<void> {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
+
+  if (env.PUPPETEER_BLOCK_HEAVY_RESOURCES) {
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      const resourceType = request.resourceType();
+      if (['font', 'image', 'media'].includes(resourceType)) {
+        void request.abort();
+        return;
+      }
+
+      void request.continue();
+    });
+  }
 }
